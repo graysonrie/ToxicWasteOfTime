@@ -125,26 +125,72 @@ class Xbox360ControllerAPI:
             print(f"Error listing recordings: {e}")
             return []
 
-    def invoke_recording(self, name: str) -> bool:
+    def invoke_recording(self, name: str, wait_for_completion: bool = True) -> bool:
         """
         Play back a saved recording on the virtual controller.
 
         Args:
             name: Name of the recording to play back
+            wait_for_completion: If True, wait for playback to complete. If False, return immediately after starting.
 
         Returns:
-            bool: True if playback started successfully, False otherwise
+            bool: True if playback started/completed successfully, False otherwise
         """
         try:
-            response = requests.post(
-                f"{self.api_url}/recording/playback/{name}",
-                timeout=300  # Longer timeout for playback
+            if wait_for_completion:
+                # Blocking call - waits for playback to complete
+                response = requests.post(
+                    f"{self.api_url}/recording/playback/{name}",
+                    timeout=300  # 5 minutes max for long recordings
+                )
+            else:
+                # Non-blocking call - just starts playback
+                response = requests.post(
+                    f"{self.api_url}/recording/playback/{name}",
+                    timeout=5
+                )
+
+            response.raise_for_status()
+            result = response.json()
+
+            # Check for Success field explicitly
+            if "Success" in result:
+                success = result["Success"]
+                if not success:
+                    message = result.get("Message", "Unknown error")
+                    print(f"Playback failed: {message}")
+                    return False
+                return True
+            elif response.status_code == 200:
+                return True
+
+            return False
+        except requests.exceptions.RequestException as e:
+            print(f"Error invoking recording: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    error_detail = e.response.json()
+                    print(f"Error details: {error_detail}")
+                except:
+                    print(f"Error response text: {e.response.text}")
+            return False
+
+    def is_playback_active(self) -> bool:
+        """
+        Check if a playback is currently active.
+
+        Returns:
+            bool: True if playback is active, False otherwise
+        """
+        try:
+            response = requests.get(
+                f"{self.api_url}/recording/playback/status",
+                timeout=2
             )
             response.raise_for_status()
             result = response.json()
-            return result.get("Success", False)
-        except requests.exceptions.RequestException as e:
-            print(f"Error invoking recording: {e}")
+            return result.get("IsActive", False) if result.get("Success") else False
+        except requests.exceptions.RequestException:
             return False
 
     def delete_recording(self, name: str) -> bool:
@@ -186,6 +232,38 @@ class Xbox360ControllerAPI:
             return False
         except requests.exceptions.RequestException as e:
             print(f"Error deleting recording: {e}")
+            return False
+
+    def cancel_playback(self) -> bool:
+        """
+        Cancel any currently playing recording and zero out all controller inputs.
+
+        Returns:
+            bool: True if cancellation was successful, False otherwise
+        """
+        try:
+            response = requests.post(
+                f"{self.api_url}/recording/cancel",
+                timeout=5
+            )
+            response.raise_for_status()
+            result = response.json()
+
+            # Check for Success field explicitly
+            if "Success" in result:
+                success = result["Success"]
+                if not success:
+                    message = result.get("Message", "Unknown error")
+                    print(f"Cancel failed: {message}")
+                return bool(success)
+
+            # If Success field is missing but we got a 200 response, assume success
+            if response.status_code == 200:
+                return True
+
+            return False
+        except requests.exceptions.RequestException as e:
+            print(f"Error cancelling playback: {e}")
             return False
 
     @staticmethod

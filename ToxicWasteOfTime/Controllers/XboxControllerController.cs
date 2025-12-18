@@ -329,9 +329,38 @@ public class XboxControllerController : ControllerBase
         {
             var virtualController = _service.GetController();
 
+            // Wait for playback to complete (blocking)
             await _recordingService.PlaybackRecordingAsync(name, virtualController);
 
             return Ok(new { Success = true, Message = $"Recording '{name}' playback completed" });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { Success = false, Message = ex.Message });
+        }
+    }
+
+    [HttpGet("recording/playback/status")]
+    public IActionResult GetPlaybackStatus()
+    {
+        try
+        {
+            var isActive = _recordingService.IsPlaybackActive;
+            return Ok(new { Success = true, IsActive = isActive });
+        }
+        catch (Exception ex)
+        {
+            return StatusCode(500, new { Success = false, Message = ex.Message });
+        }
+    }
+
+    [HttpPost("recording/cancel")]
+    public IActionResult CancelPlayback()
+    {
+        try
+        {
+            _recordingService.CancelPlayback();
+            return Ok(new { Success = true, Message = "Playback cancelled and inputs zeroed" });
         }
         catch (Exception ex)
         {

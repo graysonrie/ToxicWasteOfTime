@@ -18,6 +18,9 @@ public class ControllerRecordingService : IDisposable
     private ControllerRecording? _currentRecording;
     private IServiceScope? _recordingScope;
     private RecordingDbContext? _currentDbContext;
+    private CancellationTokenSource? _playbackCancellation;
+    private Task? _playbackTask;
+    private IXbox360Controller? _currentPlaybackController;
     private bool _disposed = false;
     private bool _endedByViewButton = false;
 
@@ -321,8 +324,16 @@ public class ControllerRecordingService : IDisposable
         return true;
     }
 
+    public bool IsPlaybackActive => _playbackTask != null && !_playbackTask.IsCompleted;
+
     public async Task PlaybackRecordingAsync(string name, IXbox360Controller virtualController)
     {
+        // Cancel any existing playback
+        if (IsPlaybackActive)
+        {
+            CancelPlayback();
+        }
+
         var recording = GetRecording(name);
         if (recording == null)
         {
@@ -334,62 +345,235 @@ public class ControllerRecordingService : IDisposable
             throw new InvalidOperationException($"Recording '{name}' has no events.");
         }
 
-        var events = recording.Events.OrderBy(e => e.TimestampMs).ToList();
-        var startTime = Stopwatch.StartNew();
-        var eventIndex = 0;
+        _playbackCancellation = new CancellationTokenSource();
+        _currentPlaybackController = virtualController;
+        var cancellationToken = _playbackCancellation.Token;
 
-        while (eventIndex < events.Count)
+        // Store the task so we can track it (set synchronously before Task.Run starts)
+        // This ensures IsPlaybackActive returns true immediately
+        var playbackTask = Task.Run(async () =>
         {
-            var currentTime = startTime.ElapsedMilliseconds;
-            var nextEvent = events[eventIndex];
-
-            if (currentTime >= nextEvent.TimestampMs)
+            try
             {
-                // Apply this event to the virtual controller
-                ApplyEventToController(virtualController, nextEvent);
-                eventIndex++;
+            var events = recording.Events.OrderBy(e => e.TimestampMs).ToList();
+            var startTime = Stopwatch.StartNew();
+            var eventIndex = 0;
+
+            while (eventIndex < events.Count && !cancellationToken.IsCancellationRequested)
+            {
+                // Get current time with high precision (using TotalMilliseconds for sub-millisecond precision)
+                var currentTimeMs = startTime.Elapsed.TotalMilliseconds;
+                var nextEvent = events[eventIndex];
+                var targetTimeMs = nextEvent.TimestampMs;
+
+                // Check if we need to wait
+                if (currentTimeMs < targetTimeMs)
+                {
+                    var waitTimeMs = targetTimeMs - currentTimeMs;
+                    await PreciseDelayAsync(waitTimeMs, cancellationToken);
+                    // Re-check time after delay (may have overshot slightly)
+                    currentTimeMs = startTime.Elapsed.TotalMilliseconds;
+                }
+
+                // Check cancellation again after delay
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    break;
+                }
+
+                // Apply all events that should occur at this timestamp (or very close to it)
+                // This handles cases where multiple events have the same timestamp
+                // We batch them together to apply in a single SubmitReport for better precision
+                var eventsToApply = new List<ControllerInputEvent>();
+
+                while (eventIndex < events.Count && !cancellationToken.IsCancellationRequested)
+                {
+                    var eventTimeMs = events[eventIndex].TimestampMs;
+
+                    // Collect events that are due (within 1ms tolerance to account for timing variations)
+                    if (eventTimeMs <= currentTimeMs + 1.0)
+                    {
+                        eventsToApply.Add(events[eventIndex]);
+                        eventIndex++;
+                    }
+                    else
+                    {
+                        // Next event is in the future, break to wait
+                        break;
+                    }
+                }
+
+                // Apply all collected events at once (more efficient and precise)
+                if (eventsToApply.Count > 0 && !cancellationToken.IsCancellationRequested)
+                {
+                    ApplyEventsToController(virtualController, eventsToApply);
+                }
+            }
+
+            // Always zero out inputs when playback ends (whether completed or cancelled)
+            if (virtualController != null)
+            {
+                ZeroOutControllerInputs(virtualController);
+            }
+        }
+        finally
+        {
+            _playbackCancellation?.Dispose();
+            _playbackCancellation = null;
+            _currentPlaybackController = null;
+            _playbackTask = null;
+        }
+        }, cancellationToken);
+
+        // Set the task reference immediately so IsPlaybackActive works
+        _playbackTask = playbackTask;
+
+        await _playbackTask;
+    }
+
+    public void CancelPlayback()
+    {
+        if (!IsPlaybackActive)
+        {
+            return;
+        }
+
+        _playbackCancellation?.Cancel();
+
+        // Wait for playback to finish (with timeout)
+        try
+        {
+            _playbackTask?.Wait(TimeSpan.FromSeconds(1));
+        }
+        catch (AggregateException)
+        {
+            // Task was cancelled, which is expected
+        }
+
+        // Zero out inputs immediately
+        if (_currentPlaybackController != null)
+        {
+            ZeroOutControllerInputs(_currentPlaybackController);
+        }
+
+        _playbackCancellation?.Dispose();
+        _playbackCancellation = null;
+        _currentPlaybackController = null;
+        _playbackTask = null;
+    }
+
+    private void ZeroOutControllerInputs(IXbox360Controller controller)
+    {
+        // Zero out all sticks
+        controller.SetAxisValue(Xbox360Axis.LeftThumbX, 0);
+        controller.SetAxisValue(Xbox360Axis.LeftThumbY, 0);
+        controller.SetAxisValue(Xbox360Axis.RightThumbX, 0);
+        controller.SetAxisValue(Xbox360Axis.RightThumbY, 0);
+
+        // Zero out all triggers
+        controller.SetSliderValue(Xbox360Slider.LeftTrigger, 0);
+        controller.SetSliderValue(Xbox360Slider.RightTrigger, 0);
+
+        // Release all buttons
+        controller.SetButtonState(Xbox360Button.A, false);
+        controller.SetButtonState(Xbox360Button.B, false);
+        controller.SetButtonState(Xbox360Button.X, false);
+        controller.SetButtonState(Xbox360Button.Y, false);
+        controller.SetButtonState(Xbox360Button.LeftShoulder, false);
+        controller.SetButtonState(Xbox360Button.RightShoulder, false);
+        controller.SetButtonState(Xbox360Button.Back, false);
+        controller.SetButtonState(Xbox360Button.Start, false);
+        controller.SetButtonState(Xbox360Button.Up, false);
+        controller.SetButtonState(Xbox360Button.Down, false);
+        controller.SetButtonState(Xbox360Button.Left, false);
+        controller.SetButtonState(Xbox360Button.Right, false);
+
+        // Submit the report to apply all changes
+        controller.SubmitReport();
+    }
+
+    private async Task PreciseDelayAsync(double milliseconds, CancellationToken cancellationToken = default)
+    {
+        if (milliseconds <= 0) return;
+
+        var sw = Stopwatch.StartNew();
+        var targetMs = milliseconds;
+
+        while (sw.Elapsed.TotalMilliseconds < targetMs && !cancellationToken.IsCancellationRequested)
+        {
+            var remaining = targetMs - sw.Elapsed.TotalMilliseconds;
+
+            if (remaining > 10)
+            {
+                // For longer delays, use async sleep to avoid blocking
+                try
+                {
+                    await Task.Delay((int)(remaining - 5), cancellationToken); // Leave 5ms for busy-wait precision
+                }
+                catch (TaskCanceledException)
+                {
+                    break;
+                }
+            }
+            else if (remaining > 1)
+            {
+                // For medium delays, use Thread.Sleep with cancellation check
+                if (cancellationToken.IsCancellationRequested) break;
+                Thread.Sleep((int)remaining);
             }
             else
             {
-                // Wait until it's time for the next event
-                var waitTime = nextEvent.TimestampMs - currentTime;
-                if (waitTime > 0)
-                {
-                    await Task.Delay((int)waitTime);
-                }
+                // For very short delays (< 1ms), use spin wait for maximum precision
+                if (cancellationToken.IsCancellationRequested) break;
+                Thread.SpinWait(100);
             }
         }
     }
 
     private void ApplyEventToController(IXbox360Controller controller, ControllerInputEvent evt)
     {
+        ApplyEventsToController(controller, new[] { evt });
+    }
+
+    private void ApplyEventsToController(IXbox360Controller controller, IEnumerable<ControllerInputEvent> events)
+    {
+        // Use the last event's state (most recent) for each input
+        // This handles cases where multiple events at the same timestamp might have different states
+        ControllerInputEvent? lastEvent = null;
+        foreach (var evt in events)
+        {
+            lastEvent = evt;
+        }
+
+        if (lastEvent == null) return;
+
         // Buttons
-        controller.SetButtonState(Xbox360Button.A, evt.ButtonA);
-        controller.SetButtonState(Xbox360Button.B, evt.ButtonB);
-        controller.SetButtonState(Xbox360Button.X, evt.ButtonX);
-        controller.SetButtonState(Xbox360Button.Y, evt.ButtonY);
-        controller.SetButtonState(Xbox360Button.LeftShoulder, evt.ButtonLeftShoulder);
-        controller.SetButtonState(Xbox360Button.RightShoulder, evt.ButtonRightShoulder);
-        controller.SetButtonState(Xbox360Button.Back, evt.ButtonBack);
-        controller.SetButtonState(Xbox360Button.Start, evt.ButtonStart);
+        controller.SetButtonState(Xbox360Button.A, lastEvent.ButtonA);
+        controller.SetButtonState(Xbox360Button.B, lastEvent.ButtonB);
+        controller.SetButtonState(Xbox360Button.X, lastEvent.ButtonX);
+        controller.SetButtonState(Xbox360Button.Y, lastEvent.ButtonY);
+        controller.SetButtonState(Xbox360Button.LeftShoulder, lastEvent.ButtonLeftShoulder);
+        controller.SetButtonState(Xbox360Button.RightShoulder, lastEvent.ButtonRightShoulder);
+        controller.SetButtonState(Xbox360Button.Back, lastEvent.ButtonBack);
+        controller.SetButtonState(Xbox360Button.Start, lastEvent.ButtonStart);
 
         // D-Pad
-        controller.SetButtonState(Xbox360Button.Up, evt.DPadUp);
-        controller.SetButtonState(Xbox360Button.Down, evt.DPadDown);
-        controller.SetButtonState(Xbox360Button.Left, evt.DPadLeft);
-        controller.SetButtonState(Xbox360Button.Right, evt.DPadRight);
+        controller.SetButtonState(Xbox360Button.Up, lastEvent.DPadUp);
+        controller.SetButtonState(Xbox360Button.Down, lastEvent.DPadDown);
+        controller.SetButtonState(Xbox360Button.Left, lastEvent.DPadLeft);
+        controller.SetButtonState(Xbox360Button.Right, lastEvent.DPadRight);
 
         // Sticks
-        controller.SetAxisValue(Xbox360Axis.LeftThumbX, Xbox360ControllerAPI.NormalizeStickValue(evt.LeftStickX));
-        controller.SetAxisValue(Xbox360Axis.LeftThumbY, Xbox360ControllerAPI.NormalizeStickValue(evt.LeftStickY));
-        controller.SetAxisValue(Xbox360Axis.RightThumbX, Xbox360ControllerAPI.NormalizeStickValue(evt.RightStickX));
-        controller.SetAxisValue(Xbox360Axis.RightThumbY, Xbox360ControllerAPI.NormalizeStickValue(evt.RightStickY));
+        controller.SetAxisValue(Xbox360Axis.LeftThumbX, Xbox360ControllerAPI.NormalizeStickValue(lastEvent.LeftStickX));
+        controller.SetAxisValue(Xbox360Axis.LeftThumbY, Xbox360ControllerAPI.NormalizeStickValue(lastEvent.LeftStickY));
+        controller.SetAxisValue(Xbox360Axis.RightThumbX, Xbox360ControllerAPI.NormalizeStickValue(lastEvent.RightStickX));
+        controller.SetAxisValue(Xbox360Axis.RightThumbY, Xbox360ControllerAPI.NormalizeStickValue(lastEvent.RightStickY));
 
         // Triggers
-        controller.SetSliderValue(Xbox360Slider.LeftTrigger, (byte)(evt.LeftTrigger * 255));
-        controller.SetSliderValue(Xbox360Slider.RightTrigger, (byte)(evt.RightTrigger * 255));
+        controller.SetSliderValue(Xbox360Slider.LeftTrigger, (byte)(lastEvent.LeftTrigger * 255));
+        controller.SetSliderValue(Xbox360Slider.RightTrigger, (byte)(lastEvent.RightTrigger * 255));
 
-        // Submit the report
+        // Submit the report once for all events at this timestamp
         controller.SubmitReport();
     }
 
@@ -401,6 +585,10 @@ public class ControllerRecordingService : IDisposable
             _recordingTask?.Wait();
             _recordingCancellation?.Dispose();
             _recordingScope?.Dispose();
+
+            CancelPlayback();
+            _playbackTask?.Wait();
+
             _disposed = true;
         }
     }
