@@ -9,7 +9,7 @@
 ## Wobbly Life Newspaper job:
 
 - Enter newspaper job room and stand to the owner's left (Don't press Y yet)
-- Run `python invoke_recording_repeat.py "news4"` and quickly focus the Xbox app window
+- Run `python invoke_recording_repeat.py "news5"` and quickly focus the Xbox app window
 - Pressing CTRL C will make the program stop after its next execution
 
 ## PvZ Bot:
