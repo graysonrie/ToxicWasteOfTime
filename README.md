@@ -1,5 +1,7 @@
 # Usage:
 
+- Prerecorded Xbox Input Player
+
 ## Wobbly Life Newspaper job:
 
 - Enter newspaper job room and stand to the owner's left (Don't press Y yet)
@@ -11,3 +13,7 @@
 - Spawn in as a character, then run `python ai_test.py` and quickly focus the Xbox app window
 - When the match ends, quickly focus on the running PowerShell window and use CTRL C to stop the program
 - Run it again after spawning in the character in the next match
+
+## Disclaimer:
+
+- The robot does not intelligently interact with its environment, it simply plays prerecorded inputs at infinitum. Thus, it is in no way able to be used for aimbot or ESP hacks.
