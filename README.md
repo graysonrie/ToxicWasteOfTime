@@ -2,6 +2,10 @@
 
 - Prerecorded Xbox Input Player
 
+## Intitial Setup:
+
+- cd into `ToxicWasteOfTime` and run `dotnet run` to start the web server so Python can interact with it
+
 ## Wobbly Life Newspaper job:
 
 - Enter newspaper job room and stand to the owner's left (Don't press Y yet)
