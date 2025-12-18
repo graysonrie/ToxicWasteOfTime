@@ -12,9 +12,9 @@ internal class TestAction1(){
         group1.PressMenu();
         group1.Wait(3000);
         group1.FlickLeftStick(0, -1);
-        group1.WaitTrivial();
+        group1.Wait(20);
         group1.FlickLeftStick(0, -1);
-        group1.WaitTrivial();
+        group1.Wait(40);
         group1.PressA();
         group1.Wait(1500);
         group1.HoldRightStick(-1, 0, 1000);

@@ -1,4 +1,6 @@
 ﻿using ToxicWasteOfTime.Services;
+using ToxicWasteOfTime.Data;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -9,6 +11,16 @@ builder.Services.AddSwaggerGen();
 
 // Register the Xbox controller service as a singleton
 builder.Services.AddSingleton<XboxControllerService>();
+
+// Register database context
+builder.Services.AddDbContext<RecordingDbContext>(options =>
+{
+    var dbPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "recordings.db");
+    options.UseSqlite($"Data Source={dbPath}");
+});
+
+// Register recording service as a singleton
+builder.Services.AddSingleton<ControllerRecordingService>();
 
 var app = builder.Build();
 

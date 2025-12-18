@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using System.Threading;
 using Nefarius.ViGEm.Client.Targets;
 using Nefarius.ViGEm.Client.Targets.Xbox360;
 
@@ -19,10 +20,23 @@ public class Xbox360ControllerAPI {
     }
 
     /// <summary>
+    /// Gets the underlying controller instance (for internal use).
+    /// </summary>
+    internal IXbox360Controller GetController() => _controller;
+
+    /// <summary>
     /// Creates a new action group for recording and executing controller inputs.
     /// </summary>
     public ActionGroup RecordActions() {
         return new ActionGroup(_controller);
+    }
+
+    /// <summary>
+    /// Creates a new live action group for executing controller inputs in real-time.
+    /// Actions execute immediately when called.
+    /// </summary>
+    public LiveActionGroup LiveActions() {
+        return new LiveActionGroup(_controller);
     }
 
     /// <summary>
@@ -38,30 +52,38 @@ public class Xbox360ControllerAPI {
 
 /// <summary>
 /// Action group for recording and executing controller inputs.
-/// Actions without a Wait() between them execute in parallel.
+/// Actions are scheduled by timestep, allowing precise timing and overlap.
 /// </summary>
 public class ActionGroup {
     private readonly IXbox360Controller _controller;
-    private readonly List<InputAction> _actions = new();
+    private readonly List<ScheduledAction> _scheduledActions = new();
+    private static readonly SemaphoreSlim _submitLock = new SemaphoreSlim(1, 1);
+    private int _currentTimestep = 0;
 
     internal ActionGroup(IXbox360Controller controller) {
         _controller = controller ?? throw new ArgumentNullException(nameof(controller));
     }
 
     /// <summary>
+    /// Sets the timestep for subsequent actions. Actions will be scheduled to start at this timestep.
+    /// </summary>
+    public ActionGroup SetTimestep(int milliseconds) {
+        _currentTimestep = milliseconds;
+        return this;
+    }
+
+    /// <summary>
     /// Waits for the specified duration. This breaks parallel grouping - actions after a Wait() execute sequentially.
+    /// [DEPRECATED: Use SetTimestep instead for better control]
     /// </summary>
     public ActionGroup Wait(int milliseconds) {
-        _actions.Add(new InputAction {
-            Type = ActionType.Wait,
-            Action = _ => { }, // Dummy action for Wait type
-            DurationMs = milliseconds
-        });
+        _currentTimestep += milliseconds;
         return this;
     }
 
     /// <summary>
     ///  Wait a very small time
+    /// [DEPRECATED: Use SetTimestep instead]
     /// </summary>
     /// <returns></returns>
     public ActionGroup WaitTrivial() {
@@ -69,44 +91,69 @@ public class ActionGroup {
     }
 
     /// <summary>
-    /// Executes all queued actions.
+    /// Executes all queued actions based on their scheduled timesteps.
     /// </summary>
     public async Task ExecuteAsync() {
-        var parallelGroup = new List<InputAction>();
-        bool lastWasWait = false;
+        if (_scheduledActions.Count == 0) return;
 
-        foreach (var action in _actions) {
-            if (action.Type == ActionType.Wait) {
-                // Execute any pending parallel actions first
-                if (parallelGroup.Count > 0) {
-                    await ExecuteParallelGroupAsync(parallelGroup);
-                    parallelGroup.Clear();
+        var allTasks = new List<Task>();
+        var startTime = System.Diagnostics.Stopwatch.StartNew();
+
+        // Group actions by timestep to handle parallel actions at the same time
+        var actionsByTimestep = _scheduledActions
+            .GroupBy(a => a.TimestepMs)
+            .OrderBy(g => g.Key)
+            .ToList();
+
+        foreach (var timestepGroup in actionsByTimestep) {
+            var timestep = timestepGroup.Key;
+            var actionsAtTimestep = timestepGroup.ToList();
+
+            // Schedule all actions at this timestep
+            allTasks.Add(Task.Run(async () => {
+                // Wait until the timestep is reached
+                var elapsed = startTime.ElapsedMilliseconds;
+                var remainingDelay = timestep - elapsed;
+                if (remainingDelay > 0) {
+                    await Task.Delay((int)remainingDelay);
                 }
-                // Execute wait
-                await Task.Delay(action.DurationMs);
-                lastWasWait = true;
-            }
-            else {
-                // If last action was a wait, start a new parallel group
-                // Otherwise, add to current parallel group
-                if (lastWasWait) {
-                    // Previous was a wait, so start new group
-                    parallelGroup.Clear();
-                    parallelGroup.Add(action);
+
+                // Execute all actions at this timestep (they should execute in parallel)
+                // For actions at the same timestep, we need to set all values together
+                await _submitLock.WaitAsync();
+                try {
+                    foreach (var scheduledAction in actionsAtTimestep) {
+                        scheduledAction.Action.Action(_controller);
+                    }
+                    _controller.SubmitReport();
                 }
-                else {
-                    // Add to current parallel group
-                    parallelGroup.Add(action);
+                finally {
+                    _submitLock.Release();
                 }
-                lastWasWait = false;
-            }
+
+                // Schedule releases for each action
+                var releaseTasks = actionsAtTimestep.Select(async scheduledAction => {
+                    var action = scheduledAction.Action;
+                    if (action.DurationMs > 0 && action.ReleaseAction != null) {
+                        await Task.Delay(action.DurationMs);
+                        await _submitLock.WaitAsync();
+                        try {
+                            action.ReleaseAction(_controller);
+                            _controller.SubmitReport();
+                        }
+                        finally {
+                            _submitLock.Release();
+                        }
+                    }
+                });
+                await Task.WhenAll(releaseTasks);
+            }));
         }
 
-        // Execute any remaining parallel actions
-        if (parallelGroup.Count > 0) {
-            await ExecuteParallelGroupAsync(parallelGroup);
-        }
+        // Wait for all actions to complete
+        await Task.WhenAll(allTasks);
     }
+
 
     /// <summary>
     /// Synchronous version of ExecuteAsync.
@@ -115,31 +162,16 @@ public class ActionGroup {
         ExecuteAsync().GetAwaiter().GetResult();
     }
 
-    private async Task ExecuteParallelGroupAsync(List<InputAction> parallelActions) {
-        var tasks = parallelActions.Select(async action => {
-            action.Action(_controller);
-            if (action.DurationMs > 0) {
-                await Task.Delay(action.DurationMs);
-                // Release after this action's duration
-                if (action.ReleaseAction != null) {
-                    action.ReleaseAction(_controller);
-                }
-            }
-            else if (action.ReleaseAction != null) {
-                // No duration, release immediately (shouldn't happen but handle it)
-                action.ReleaseAction(_controller);
-            }
-        });
-
-        await Task.WhenAll(tasks);
-    }
 
     private void AddAction(Action<IXbox360Controller> action, int durationMs = 0, Action<IXbox360Controller>? releaseAction = null) {
-        _actions.Add(new InputAction {
-            Type = ActionType.Input,
-            Action = action,
-            DurationMs = durationMs,
-            ReleaseAction = releaseAction
+        _scheduledActions.Add(new ScheduledAction {
+            TimestepMs = _currentTimestep,
+            Action = new InputAction {
+                Type = ActionType.Input,
+                Action = action,
+                DurationMs = durationMs,
+                ReleaseAction = releaseAction
+            }
         });
     }
 
@@ -381,5 +413,10 @@ public class ActionGroup {
         public required Action<IXbox360Controller> Action { get; set; }
         public int DurationMs { get; set; }
         public Action<IXbox360Controller>? ReleaseAction { get; set; }
+    }
+
+    private class ScheduledAction {
+        public int TimestepMs { get; set; }
+        public required InputAction Action { get; set; }
     }
 }

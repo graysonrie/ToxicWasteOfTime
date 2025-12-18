@@ -5,7 +5,7 @@ from typing import List, Optional, Dict, Any
 class ActionGroup:
     """
     Action group for recording and executing controller inputs.
-    Actions without a Wait() between them execute in parallel.
+    Actions are scheduled by timestep, allowing precise timing and overlap.
     """
 
     def __init__(self, api_url: str):
@@ -17,11 +17,26 @@ class ActionGroup:
         """
         self.api_url = api_url
         self._actions: List[Dict[str, Any]] = []
+        self._current_timestep = 0
+
+    def set_timestep(self, milliseconds: int) -> 'ActionGroup':
+        """
+        Sets the timestep for subsequent actions. Actions will be scheduled to start at this timestep.
+
+        Args:
+            milliseconds: Timestep in milliseconds from the start of execution
+
+        Returns:
+            ActionGroup: Self for method chaining
+        """
+        self._current_timestep = milliseconds
+        return self
 
     def wait(self, milliseconds: int) -> 'ActionGroup':
         """
         Waits for the specified duration. This breaks parallel grouping -
         actions after a Wait() execute sequentially.
+        [DEPRECATED: Use set_timestep instead for better control]
 
         Args:
             milliseconds: Duration to wait in milliseconds
@@ -29,15 +44,13 @@ class ActionGroup:
         Returns:
             ActionGroup: Self for method chaining
         """
-        self._actions.append({
-            "Type": "wait",
-            "Milliseconds": milliseconds
-        })
+        self._current_timestep += milliseconds
         return self
 
     def wait_trivial(self) -> 'ActionGroup':
         """
         Wait a very small time (25ms).
+        [DEPRECATED: Use set_timestep instead]
 
         Returns:
             ActionGroup: Self for method chaining
@@ -62,7 +75,8 @@ class ActionGroup:
         """
         self._actions.append({
             "Type": "pressa",
-            "Milliseconds": milliseconds
+            "Milliseconds": milliseconds,
+            "TimestepMs": self._current_timestep
         })
         return self
 
@@ -82,7 +96,8 @@ class ActionGroup:
         """
         self._actions.append({
             "Type": "pressb",
-            "Milliseconds": milliseconds
+            "Milliseconds": milliseconds,
+            "TimestepMs": self._current_timestep
         })
         return self
 
@@ -102,7 +117,8 @@ class ActionGroup:
         """
         self._actions.append({
             "Type": "pressx",
-            "Milliseconds": milliseconds
+            "Milliseconds": milliseconds,
+            "TimestepMs": self._current_timestep
         })
         return self
 
@@ -122,35 +138,40 @@ class ActionGroup:
         """
         self._actions.append({
             "Type": "pressy",
-            "Milliseconds": milliseconds
+            "Milliseconds": milliseconds,
+            "TimestepMs": self._current_timestep
         })
         return self
 
     def press_left_shoulder(self) -> 'ActionGroup':
         """Press left shoulder button."""
         self._actions.append({
-            "Type": "pressleftshoulder"
+            "Type": "pressleftshoulder",
+            "TimestepMs": self._current_timestep
         })
         return self
 
     def press_right_shoulder(self) -> 'ActionGroup':
         """Press right shoulder button."""
         self._actions.append({
-            "Type": "pressrightshoulder"
+            "Type": "pressrightshoulder",
+            "TimestepMs": self._current_timestep
         })
         return self
 
     def press_view(self) -> 'ActionGroup':
         """Press View button (Back button)."""
         self._actions.append({
-            "Type": "pressview"
+            "Type": "pressview",
+            "TimestepMs": self._current_timestep
         })
         return self
 
     def press_menu(self) -> 'ActionGroup':
         """Press Menu button (Start button)."""
         self._actions.append({
-            "Type": "pressmenu"
+            "Type": "pressmenu",
+            "TimestepMs": self._current_timestep
         })
         return self
 
@@ -159,28 +180,32 @@ class ActionGroup:
     def press_dpad_up(self) -> 'ActionGroup':
         """Press D-Pad up."""
         self._actions.append({
-            "Type": "pressdpadup"
+            "Type": "pressdpadup",
+            "TimestepMs": self._current_timestep
         })
         return self
 
     def press_dpad_down(self) -> 'ActionGroup':
         """Press D-Pad down."""
         self._actions.append({
-            "Type": "pressdpaddown"
+            "Type": "pressdpaddown",
+            "TimestepMs": self._current_timestep
         })
         return self
 
     def press_dpad_left(self) -> 'ActionGroup':
         """Press D-Pad left."""
         self._actions.append({
-            "Type": "pressdpadleft"
+            "Type": "pressdpadleft",
+            "TimestepMs": self._current_timestep
         })
         return self
 
     def press_dpad_right(self) -> 'ActionGroup':
         """Press D-Pad right."""
         self._actions.append({
-            "Type": "pressdpadright"
+            "Type": "pressdpadright",
+            "TimestepMs": self._current_timestep
         })
         return self
 
@@ -202,7 +227,8 @@ class ActionGroup:
             "Type": "holdleftstick",
             "X": x,
             "Y": y,
-            "Milliseconds": milliseconds
+            "Milliseconds": milliseconds,
+            "TimestepMs": self._current_timestep
         })
         return self
 
@@ -220,7 +246,8 @@ class ActionGroup:
         self._actions.append({
             "Type": "flickleftstick",
             "X": x,
-            "Y": y
+            "Y": y,
+            "TimestepMs": self._current_timestep
         })
         return self
 
@@ -240,7 +267,8 @@ class ActionGroup:
             "Type": "holdrightstick",
             "X": x,
             "Y": y,
-            "Milliseconds": milliseconds
+            "Milliseconds": milliseconds,
+            "TimestepMs": self._current_timestep
         })
         return self
 
@@ -258,7 +286,8 @@ class ActionGroup:
         self._actions.append({
             "Type": "flickrightstick",
             "X": x,
-            "Y": y
+            "Y": y,
+            "TimestepMs": self._current_timestep
         })
         return self
 
@@ -280,7 +309,8 @@ class ActionGroup:
         """
         self._actions.append({
             "Type": "presslefttrigger",
-            "Milliseconds": milliseconds
+            "Milliseconds": milliseconds,
+            "TimestepMs": self._current_timestep
         })
         return self
 
@@ -300,7 +330,8 @@ class ActionGroup:
         """
         self._actions.append({
             "Type": "pressrighttrigger",
-            "Milliseconds": milliseconds
+            "Milliseconds": milliseconds,
+            "TimestepMs": self._current_timestep
         })
         return self
 

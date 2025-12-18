@@ -24,6 +24,8 @@ public class XboxControllerService : IDisposable
 
     public Xbox360ControllerAPI GetAPI() => _api;
 
+    public IXbox360Controller GetController() => _controller;
+
     public void Dispose()
     {
         if (!_disposed)
