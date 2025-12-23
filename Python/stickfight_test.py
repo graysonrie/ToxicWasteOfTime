@@ -91,7 +91,7 @@ def main():
                 x_press_time = elapsed + x_press_interval
 
             # Small sleep to prevent tight loop
-            sleep(0.01)
+            # sleep(0.01)
 
     except KeyboardInterrupt:
         print('\nCtrl-C received! Exiting loop and completing actions...')
