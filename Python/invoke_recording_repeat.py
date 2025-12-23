@@ -26,6 +26,9 @@ def main():
     name = sys.argv[1]
     api = Xbox360ControllerAPI(base_url="http://localhost:5000")
 
+    print('waiting 4 seconds before starting playback')
+    time.sleep(4)
+
     # Flag to track if we should continue
     should_continue = True
 
