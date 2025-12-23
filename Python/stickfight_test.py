@@ -19,122 +19,79 @@ def main():
         return random.randint(min, max)
 
     try:
+        # Track trigger state for alternating
+        use_right_trigger = True
+
+        # Track left stick direction (-1 or 1)
+        left_stick_x = random.choice([-1, 1])  # Start with random direction
+        left_stick_hold_time = 0
+        left_stick_duration = random_range(0.05, 3.0)  # Very short to a few seconds
+
+        # Track right stick update timing
+        right_stick_update_time = 0
+        right_stick_update_interval = random_range(0.05, 0.2)  # Update frequently
+
+        # Track A button press timing
+        a_press_time = 0
+        a_press_interval = random_range(0.1, 0.4)  # Press A frequently
+
+        # Track X button press timing
+        x_press_time = 0
+        x_press_interval = random_range(2.0, 5.0)  # Press X occasionally
+
+        # Track trigger press timing
+        trigger_press_time = 0
+        trigger_press_interval = random_range(0.1, 0.3)  # Alternate triggers frequently
+
+        start_time = time.time()
+
+        # Initialize left stick position
+        live_actions.hold_left_stick(left_stick_x, 0)
+
         while True:
+            current_time = time.time()
+            elapsed = current_time - start_time
 
-            right_x = random_range(-1, 1)
-            right_y = random_range(-1, 1)
-            live_actions.hold_right_stick(right_x, right_y) # random direction
-            sleep(random_range(.2,.6))
-            live_actions.cancel_right_stick()
-            # Start moving forward
-            left_x = random_range(-1, 1)
-            live_actions.hold_left_stick(left_x, 0) # walk forward
-            live_actions.cancel_right_stick()
-            live_actions.press_right_trigger()
+            # Constantly move right stick between -1 and 1 for both X and Y
+            if elapsed >= right_stick_update_time:
+                right_x = random_range(-1, 1)
+                right_y = random_range(-1, 1)
+                live_actions.hold_right_stick(right_x, right_y)
+                right_stick_update_time = elapsed + right_stick_update_interval
+                right_stick_update_interval = random_range(0.05, 0.2)
 
-            # Jump while moving
-            sleep(random_range(.1,.5))
-            live_actions.press_a()  # Quick jump
-            sleep(random_range(.1,.3))
-            live_actions.press_right_trigger()
+            # Left stick: alternate between -1 and 1 on X axis for varying durations
+            if elapsed >= left_stick_hold_time:
+                # Switch direction
+                left_stick_x = -1 if left_stick_x == 1 else 1
+                live_actions.hold_left_stick(left_stick_x, 0)
+                left_stick_duration = random_range(0.05, 3.0)  # Very short to a few seconds
+                left_stick_hold_time = elapsed + left_stick_duration
 
-            # Continue moving and turn
-            left_x = random_range(-1, 1)
-            live_actions.hold_left_stick(left_x, 0) # keep moving forward
-            right_x = random_range(-1, 1)
-            live_actions.press_a()  # Quick jump
-            right_y = random_range(-1, 1)
-            live_actions.hold_right_stick(right_x, right_y) # random direction
-            live_actions.press_right_trigger()
-            sleep(random_range(.2,.6))
-            live_actions.press_right_trigger()
-            live_actions.cancel_right_stick()
+            # Rapidly press A often
+            if elapsed >= a_press_time:
+                live_actions.press_a()
+                a_press_interval = random_range(0.1, 0.4)
+                a_press_time = elapsed + a_press_interval
 
-            # Another jump
-            live_actions.press_a()  # Quick jump
-            live_actions.press_right_trigger()
-            sleep(random_range(.1,.3))
-            live_actions.press_right_trigger()
+            # Constantly alternate between right and left trigger (never at same time)
+            if elapsed >= trigger_press_time:
+                if use_right_trigger:
+                    live_actions.press_right_trigger()
+                else:
+                    live_actions.press_left_trigger()
+                use_right_trigger = not use_right_trigger  # Alternate
+                trigger_press_interval = random_range(0.1, 0.3)
+                trigger_press_time = elapsed + trigger_press_interval
 
-            # Keep moving
-            left_x = random_range(-1, 1)
-            live_actions.hold_left_stick(left_x, 0) # walk forward
-            live_actions.cancel_right_stick()
-            live_actions.press_right_trigger()
-            live_actions.press_a()  # Quick jump
-            sleep(random_range(.1,.4))
-            live_actions.press_right_trigger()
-            live_actions.press_a()  # Quick jump
+            # Occasionally press X button
+            if elapsed >= x_press_time:
+                live_actions.press_x()
+                x_press_interval = random_range(2.0, 5.0)
+                x_press_time = elapsed + x_press_interval
 
-            live_actions.press_b()
-            live_actions.press_a()  # Quick jump
-            if irandom_range(0,1) == 0:
-                live_actions.press_dpad_right()
-            else:
-                live_actions.press_dpad_left()
-
-            # Continue moving forward
-            left_x = random_range(-1, 1)
-            live_actions.hold_left_stick(left_x, 0) # walk forward
-            right_x = random_range(-1, 1)
-            right_y = random_range(-1, 1)
-            live_actions.hold_right_stick(right_x, right_y) # random direction
-            live_actions.press_right_trigger()
-            live_actions.press_a()  # Quick jump
-            sleep(random_range(.2,.5))
-            live_actions.press_a()  # Quick jump
-
-            # Jump again
-            live_actions.press_right_trigger()
-            sleep(random_range(.1,.2))
-
-            right_x = random_range(-1, 1)
-            right_y = random_range(-1, 1)
-            live_actions.hold_right_stick(right_x, right_y) # random direction
-            live_actions.press_right_trigger()
-            sleep(random_range(.2,.6))
-
-            live_actions.press_a()  # Quick jump
-            live_actions.cancel_right_stick()
-            live_actions.press_right_trigger()
-
-            live_actions.press_right_trigger()
-            sleep(random_range(.1,.3))
-            live_actions.press_right_trigger()
-
-            # Keep moving
-            left_x = random_range(-1, 1)
-            live_actions.hold_left_stick(left_x, 0) # walk forward
-            sleep(random_range(.3,.8))
-            live_actions.press_right_trigger()
-
-            live_actions.press_left_shoulder()
-            live_actions.press_right_trigger()
-            sleep(random_range(.1,.3))
-            live_actions.press_right_trigger()
-
-            # Continue moving and turning
-            left_x = random_range(-1, 1)
-            live_actions.hold_left_stick(left_x, 0) # walk forward
-            right_x = random_range(-1, 1)
-            right_y = random_range(-1, 1)
-            live_actions.press_right_trigger()
-            live_actions.hold_right_stick(right_x, right_y) # random direction
-            sleep(random_range(.2,.5))
-
-            live_actions.press_right_trigger()
-            # Another jump
-            live_actions.press_a()  # Quick jump
-            sleep(random_range(.1,.2))
-
-            # Keep moving
-            left_x = random_range(-1, 1)
-            live_actions.hold_left_stick(left_x, 0) # walk forward
-            live_actions.press_right_shoulder()
-            sleep(random_range(.3,.6))
-
-            live_actions.press_right_trigger()
-            sleep(random_range(1,2))
+            # Small sleep to prevent tight loop
+            sleep(0.01)
 
     except KeyboardInterrupt:
         print('\nCtrl-C received! Exiting loop and completing actions...')
